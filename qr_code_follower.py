@@ -1,4 +1,5 @@
 import cv2
+import cv2.aruco as aruco
 from djitellopy import Tello
 import mediapipe as mp
 import numpy as np
@@ -28,6 +29,29 @@ pressed_keys = set()
 # Connect to Tello drone
 tello.connect()
 tello.set_speed(speed)
+tello.set_video_direction(Tello.CAMERA_DOWNWARD)
+tello.streamon()
+frame_read = tello.get_frame_read()
+
+# Define o dicionário de marcadores ArUco e os parâmetros do detector
+dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+parameters = aruco.DetectorParameters()
+
+# Parâmetros da câmera (ajuste conforme sua câmera)
+# Esses valores podem ser calibrados ou ajustados manualmente para sua câmera.
+# Exemplo de parâmetros de uma câmera simples:
+fx = 100  # Focal length x (em pixels)
+fy = 100  # Focal length y (em pixels)
+cx = 160  # Centro da imagem x
+cy = 120  # Centro da imagem y
+
+# Matriz de calibração da câmera (Apenas um exemplo, ajuste conforme sua câmera)
+camera_matrix = np.array([[fx, 0, cx],
+                          [0, fy, cy],
+                          [0, 0, 1]])
+
+# Distortion coefficients (ajuste conforme sua câmera)
+dist_coeffs = np.zeros((4, 1))  # Supondo que não haja distorção
 
 
 FPS = 120
@@ -54,15 +78,16 @@ x_speeds = []
 y_speeds = []
 
 should_continue = True
+hand_is_closed = False
 
-def send_drone_speeds(x_speed, y_speed):
+def send_drone_speeds(x_speed, y_speed, z_speed):
     global for_back_velocity
     global left_right_velocity
     global yaw_velocity
     global send_rc_control
     global up_down_velocity
 
-    new_x_speed = int(x_speed / 2)
+    new_x_speed = int(-x_speed / 2)
     if(new_x_speed > 100): new_x_speed = 100
     if(new_x_speed < -100): new_x_speed = -100
 
@@ -70,11 +95,12 @@ def send_drone_speeds(x_speed, y_speed):
     if(new_y_speed > 100): new_y_speed = 100
     if(new_y_speed < -100): new_y_speed = -100
 
-    left_right_velocity = new_x_speed
+    for_back_velocity = new_x_speed
     up_down_velocity = new_y_speed
+    left_right_velocity = int(z_speed)
 
 
-    print(f"Sending x: {new_x_speed} ({x_speed})  y : {y_speed}")
+    print(f"Sending x: {new_x_speed} ({x_speed})  y : {new_y_speed} ({y_speed})  z : {z_speed}")
 
 
     global send_rc_control
@@ -146,6 +172,22 @@ with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5, m
                 center_x = (int(hand_landmarks.landmark[9].x * frame.shape[1]) + int(hand_landmarks.landmark[0].x * frame.shape[1])) // 2
                 center_y = (int(hand_landmarks.landmark[9].y * frame.shape[0]) + int(hand_landmarks.landmark[0].y * frame.shape[0])) // 2
                 new_center = (center_x, center_y)
+
+                # Check if the hand is closed by checking if 0-12 distance is smaller than 0-9
+                # Vector between 0 and 12   
+
+                vector_0_12 = np.array([hand_landmarks.landmark[0].x - hand_landmarks.landmark[12].x,
+                                        hand_landmarks.landmark[0].y - hand_landmarks.landmark[12].y])
+                vector_0_9 = np.array([hand_landmarks.landmark[0].x - hand_landmarks.landmark[9].x,
+                                        hand_landmarks.landmark[0].y - hand_landmarks.landmark[9].y])
+                distance_0_12 = np.linalg.norm(vector_0_12)
+                distance_0_9 = np.linalg.norm(vector_0_9)
+                if distance_0_12 < distance_0_9:
+                    hand_is_closed = True
+                    print("Hand is closed")
+                else:
+                    hand_is_closed = False
+                
                 
                 # Find the closest existing hand
                 hand_id = find_closest_hand(new_center, hand_positions)
@@ -157,7 +199,10 @@ with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5, m
                 
                 hand_positions[hand_id] = new_center
                 hands_detected[hand_id] = new_center
+
+               
                 hand_trails[hand_id].append(new_center)
+                
                 hand_lost_counter[hand_id] = 0  # Reset lost frame counter
                 
                 # Draw the center point and coordinates
@@ -173,6 +218,10 @@ with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5, m
                     del hand_trails[hand_id]
                     del hand_positions[hand_id]
                     del hand_lost_counter[hand_id]
+
+        x_component = 0
+        y_component = 0
+        z_component = 0
         
         # Draw the tracked points for each hand
         for trail in hand_trails.values():
@@ -180,25 +229,66 @@ with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5, m
             #     cv2.line(frame, trail[j - 1], trail[j], (255, 0, 0), 2)
 
             # Get vector between first and last point
-            vector = np.array(trail[-1]) - np.array(trail[0])
-            cv2.arrowedLine(frame, trail[-1], trail[-1] + vector, (0, 255, 0), 2)
+            if not hand_is_closed and len(trail) > 1:
+                print("Hand is closed")
+                vector = np.array(trail[-1]) - np.array(trail[0])
+                cv2.arrowedLine(frame, trail[-1], trail[-1] + vector, (0, 255, 0), 2)
 
-            # Get x and y components of the vector
-            # x_component = vector[0]
+                # Get x and y components of the vector
+                x_component = vector[0]
+                y_component = vector[1]
+
+                x_speeds.append(x_component)
+                y_speeds.append(y_component)
+
+            # Captura o frame atual
+        frame_drone = frame_read.frame[0:240, :, :]
+
+        #flip frame 90 degrees
+        # frame_drone = cv2.rotate(frame_drone, cv2.ROTATE_90_CLOCKWISE)
+        
+        # Converte para tons de cinza
+        gray = cv2.cvtColor(frame_drone, cv2.COLOR_BGR2GRAY)
+        
+        # Detecta os marcadores ArUco
+        corners, ids, _ = aruco.detectMarkers(gray, dictionary, parameters=parameters)
+        
+        if ids is not None:
+            # Desenha os marcadores detectados
+            aruco.drawDetectedMarkers(frame_drone, corners, ids)
             
-            x_component = 0
-            y_component = 0
+            # Estima a posição do marcador em relação à câmera
+            # Ajuste para 0.2 metros (20 cm) se o tamanho do marcador for 20 cm
+            marker_size = 17.5  # Tamanho do marcador em cm
+            rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
+            
+            # Para o primeiro marcador detectado
 
-            x_speeds.append(x_component)
-            y_speeds.append(y_component)
+            rvec = rvecs[0]
+            tvec = tvecs[0]
+            
+            # Desenha os eixos (3D) do marcador
+            cv2.drawFrameAxes(frame_drone, camera_matrix, dist_coeffs, rvec, tvec, 0.1)
+            
+            # Imprime a posição estimada (translação) com duas casas decimais
+            # A translação (tvecs) já está em metros, então, se precisar em centímetros, multiplique por 100
+            print(f"Posição do ArUco marker {ids[0]}: x={tvec[0][0]:.1f} cm, y={tvec[0][1]:.1f} cm, z={tvec[0][2]:.1f} cm")
 
-            if ACTIVE_PLOT:
-                # Plot the speed graphs
-                plot_speed_graphs(x_speeds, y_speeds)
+            # x_component = 1*tvec[0][0]
+            # y_component = 3*tvec[0][1]
 
-            send_drone_speeds(x_component, y_component)
+            z_component = -1*tvec[0][1]    
+            
+        # Exibe o frame em tempo real
+        cv2.imshow("Tello Camera", frame_drone)
 
-            time.sleep(1/FPS)
+        if ACTIVE_PLOT:
+            # Plot the speed graphs
+            plot_speed_graphs(x_speeds, y_speeds)
+
+        send_drone_speeds(x_component, y_component, z_component)
+
+        time.sleep(1/FPS)
 
 
         # Show the frame
