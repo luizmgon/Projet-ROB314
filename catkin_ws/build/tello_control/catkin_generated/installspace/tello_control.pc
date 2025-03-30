@@ -1,0 +1,8 @@
+prefix=/home/luiz/Documentos/ENSTA/ROB14/Projet/Projet-ROB314/catkin_ws/install
+
+Name: tello_control
+Description: Description of tello_control
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

@@ -1,4 +1,6 @@
 import cv2
+cv2.namedWindow('Hand Tracking', cv2.WINDOW_NORMAL)
+cv2.namedWindow("Tello Camera", cv2.WINDOW_NORMAL)
 import cv2.aruco as aruco
 from djitellopy import Tello
 import mediapipe as mp
@@ -6,7 +8,7 @@ import numpy as np
 from collections import defaultdict, deque
 import matplotlib.pyplot as plt
 import time
-import keyboard
+from pynput import keyboard
 
 # Speed of the drone
 S = 20
@@ -80,6 +82,30 @@ y_speeds = []
 should_continue = True
 hand_is_closed = False
 
+
+def on_press(key):
+    global send_rc_control, should_continue
+    try:
+        if key.char == 't':
+            tello.takeoff()
+            send_rc_control = True
+        elif key.char == 'l':
+            tello.land()
+            send_rc_control = False
+        elif key.char == '\x1b':  # ESC key
+            tello.land()
+            send_rc_control = False
+            should_continue = False
+    except AttributeError:
+        pass
+
+def on_release(key):
+    pass
+
+
+listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+listener.start()
+
 def send_drone_speeds(x_speed, y_speed, z_speed):
     global for_back_velocity
     global left_right_velocity
@@ -101,24 +127,6 @@ def send_drone_speeds(x_speed, y_speed, z_speed):
 
 
     print(f"Sending x: {new_x_speed} ({x_speed})  y : {new_y_speed} ({y_speed})  z : {z_speed}")
-
-
-    global send_rc_control
-    global should_continue
-
-    # Check for key presses and handle accordingly
-    if keyboard.is_pressed('t'):  # Detect if the key is pressed
-        tello.takeoff()
-        send_rc_control = True
-
-    elif keyboard.is_pressed('l'):
-        tello.land()
-        send_rc_control = False
-
-    elif keyboard.is_pressed('esc'):
-        tello.land()
-        send_rc_control = False
-        should_continue = False
 
     # Send velocities to the drone
     if send_rc_control:
@@ -230,7 +238,6 @@ with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5, m
 
             # Get vector between first and last point
             if not hand_is_closed and len(trail) > 1:
-                print("Hand is closed")
                 vector = np.array(trail[-1]) - np.array(trail[0])
                 cv2.arrowedLine(frame, trail[-1], trail[-1] + vector, (0, 255, 0), 2)
 

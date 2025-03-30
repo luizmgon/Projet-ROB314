@@ -1,0 +1,9 @@
+<launch>
+    <node name="keyboard_control" pkg="tello_control" type="keyboard_control.py" output="screen"/>
+
+    <node name="hand_to_speed" pkg="tello_control" type="hand_to_speed.py" output="screen"/>
+
+    <node name="aruco_detector" pkg="tello_control" type="aruco_detector.py" output="screen"/>
+
+    <node name="tello_driver" pkg="tello_control" type="tello_driver.py" output="screen"/>
+</launch>
